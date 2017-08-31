@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
 
@@ -19,9 +18,6 @@ import javax.ws.rs.core.Response;
 import org.apache.commons.io.IOUtils;
 import org.apache.http.client.utils.URIBuilder;
 import org.json.*;
-
-import com.sun.jersey.json.impl.JsonRootEatingInputStreamFilter;
-import com.sun.jersey.json.impl.reader.JsonXmlStreamReader;
 
 /**
  * Gazetter proxy for ClimateCharts server.

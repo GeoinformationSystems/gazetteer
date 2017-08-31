@@ -1,7 +1,5 @@
 package net.climatecharts;
 
-import static org.junit.Assert.*;
-
 import java.io.IOException;
 
 import org.apache.http.ParseException;
