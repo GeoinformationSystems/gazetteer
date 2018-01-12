@@ -15,3 +15,8 @@ hs_err_pid*
 .settings/
 .classpath
 .project
+
+# netbeans stuff
+nb-configuration.xml
+target/*
+!target/m2e-wtp

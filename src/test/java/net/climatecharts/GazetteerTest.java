@@ -42,14 +42,14 @@ public class GazetteerTest
 	@Test
 	public void testElevation() throws ParseException, IOException
 	{
-		String responseString = new Gazetteer().find("getElevation", testLat, testLng);
+		String responseString = new Gazetteer().find("getElevation", testLat, testLng, 20);
 		System.out.println(responseString);	
 	}
 	
 	@Test
 	public void testPlaceName() throws ParseException, IOException
 	{
-		String responseString = new Gazetteer().find("getName", testLat, testLng);
+		String responseString = new Gazetteer().find("getName", testLat, testLng, 20);
 		System.out.println(responseString);	
 	}
 }

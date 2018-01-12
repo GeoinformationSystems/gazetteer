@@ -38,7 +38,7 @@ public class Gazetteer
 	private static final String geonamesUser = 	"climatediagrams";
 	
 	// how many kilometers away from the given point shall be searched for the next location?
-	private static final int 	locationRadius = 10;
+	private static int 	locationRadius = 0;
 	
 	/* priority list: location codes
 	 * in which order of priority shall location name be found?
@@ -80,13 +80,22 @@ public class Gazetteer
 	public String find(
 				@PathParam("op") String 	op,
 				@QueryParam("lat") Double 	lat,
-				@QueryParam("lng") Double 	lng
+				@QueryParam("lng") Double 	lng,
+                                @QueryParam("rad") Integer 	rad
 			)
 	{	
 		if (lat == null || lng == null)
 		{
 			throw new WebApplicationException(Response.Status.BAD_REQUEST);
 		}
+                if (rad == null)
+                {
+                    locationRadius = 20;
+                }
+                else
+                {
+                    locationRadius = rad;
+                }
 		
 		if (op.equals("getName"))
 		{
