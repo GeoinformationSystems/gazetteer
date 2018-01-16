@@ -90,7 +90,7 @@ public class Gazetteer
 		}
                 if (rad == null)
                 {
-                    locationRadius = 20;
+                    locationRadius = 10;
                 }
                 else
                 {
