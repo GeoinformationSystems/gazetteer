@@ -28,26 +28,29 @@ public class GazetteerTest
 //	double testLng = 14.6393;
 	
 	// Test: Roma, Italia / Vatican City
-	double testLat = 41.9139;
-	double testLng = 12.4388;
+//	double testLat = 41.9139;
+//	double testLng = 12.4388;
 	
 	// Test: Ostrava
 //	double testLat = 49.8506;
 //	double testLng = 18.3338;	
 	
-	
-	
+	// Test: Rabenau, Sachsen, Deutschland
+	double testLat = 50.964;
+	double testLng = 13.645;
+
+        
 	@Test
 	public void testElevation() throws ParseException, IOException
 	{
-		String responseString = new Gazetteer().find("getElevation", testLat, testLng);
+		String responseString = new Gazetteer().find("getElevation", testLat, testLng, 20);
 		System.out.println(responseString);	
 	}
 	
 	@Test
 	public void testPlaceName() throws ParseException, IOException
 	{
-		String responseString = new Gazetteer().find("getName", testLat, testLng);
+		String responseString = new Gazetteer().find("getName", testLat, testLng, 20);
 		System.out.println(responseString);	
 	}
 }
