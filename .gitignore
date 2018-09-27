@@ -1,3 +1,5 @@
+/target/*
+target/*
 *.class
 
 # Mobile Tools for Java (J2ME)
@@ -18,6 +20,10 @@ hs_err_pid*
 
 # netbeans stuff
 nb-configuration.xml
+<<<<<<< HEAD
 target/*
 !target/m2e-wtp
 
+=======
+/target/
+>>>>>>> develop
