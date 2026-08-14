@@ -2,21 +2,24 @@ package net.climatecharts;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ListIterator;
 
-import javax.ws.rs.GET;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.WebApplicationException;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.WebApplicationException;
+import jakarta.ws.rs.core.Response;
 
-import org.apache.commons.io.IOUtils;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.utils.URIBuilder;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
 import org.json.*;
 
 /**
@@ -28,10 +31,40 @@ import org.json.*;
 
 @Path("/{op}")
 public class Gazetteer
-{	
-	private static final String srtm3Url = 		"http://api.geonames.org/srtm3JSON";
-	private static final String placenameUrl = 	"http://api.geonames.org/findNearbyJSON";
+{
+	// Geonames serves its HTTPS certificate for the host "secure.geonames.org",
+	// not for "api.geonames.org". Calling api.geonames.org over HTTPS triggers
+	// SSLPeerUnverifiedException in any HTTP client with strict hostname
+	// verification (HttpClient, java.net.http, browsers). Use secure.geonames.org
+	// for HTTPS requests — it is the canonical TLS endpoint per geonames docs.
+	private static final String srtm3Url = 		"https://secure.geonames.org/srtm3JSON";
+	private static final String placenameUrl = 	"https://secure.geonames.org/findNearbyJSON";
 	private static final String geonamesUser = 	"climatediagrams";
+
+	// Shared HTTP client; created once per instance and reused across requests.
+	private final transient CloseableHttpClient httpClient;
+
+	/** Default constructor: uses a fresh HttpClient. */
+	public Gazetteer()
+	{
+		this(HttpClients.createDefault());
+	}
+
+	/** Package-private constructor for tests: inject a mocked HttpClient. */
+	Gazetteer(CloseableHttpClient httpClient)
+	{
+		this.httpClient = httpClient;
+	}
+
+	/** Fetches the response body of the given URL as a String. Package-private
+	 *  for tests; throws IOException so callers can map to a 5xx response. */
+	String fetch(java.net.URI uri) throws IOException
+	{
+		try (CloseableHttpResponse response = httpClient.execute(new HttpGet(uri)))
+		{
+			return EntityUtils.toString(response.getEntity());
+		}
+	}
 	
 	// how many kilometers away from the given point shall be searched for the next location?
 	private static int 	locationRadius = 0;
@@ -110,11 +143,9 @@ public class Gazetteer
 //					.addParameter("localCountry", "true")
 					.addParameter("maxRows", "100")
 					.addParameter("username", geonamesUser);
-				
-				URL url = uri.build().toURL();
-				
+
 				// response: JSON string
-				final String dataStr = IOUtils.toString(url);
+				final String dataStr = fetch(uri.build());
 				
 				// convert JSON string to JSON object to read it
 				JSONObject dataObj = new JSONObject(dataStr);
@@ -215,17 +246,16 @@ public class Gazetteer
 		
 		else if (op.equals("getElevation"))
 		{
-			// http://api.geonames.org/srtm3JSON?lat=21.15&lng=46.38&username=climatediagrams
+			// https://api.geonames.org/srtm3JSON?lat=21.15&lng=46.38&username=climatediagrams
 			try
 			{
-				final URL url = new URIBuilder(srtm3Url)
+				final java.net.URI uri = new URIBuilder(srtm3Url)
 						.addParameter("lat", lat.toString())
 						.addParameter("lng", lng.toString())
 						.addParameter("username", geonamesUser)
-						.build().toURL();
-				
-				final String data = IOUtils.toString(url);
-				return data;
+						.build();
+
+				return fetch(uri);
 			}
 			catch (IOException e)
 			{
