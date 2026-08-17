@@ -306,6 +306,34 @@ public class GazetteerTest
 		}
 	}
 
+	// ---------- Home page (welcome file) -------------------------------
+
+	@Test
+	public void viewHome_returnsIndexHtmlContent() throws Exception
+	{
+		String html = "<html><body>Welcome to gazetteer</body></html>";
+		when(servletContext.getResourceAsStream("/index.html"))
+			.thenReturn(new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8)));
+		Gazetteer g = newGazetteer();
+
+		jakarta.ws.rs.core.Response r = g.viewHome();
+
+		assertEquals(200, r.getStatus());
+		assertEquals(html, r.getEntity());
+	}
+
+	@Test
+	public void viewHome_returns404WhenIndexHtmlMissing() throws Exception
+	{
+		when(servletContext.getResourceAsStream("/index.html"))
+			.thenReturn(null);
+		Gazetteer g = newGazetteer();
+
+		jakarta.ws.rs.core.Response r = g.viewHome();
+
+		assertEquals(404, r.getStatus());
+	}
+
 	// ---------- Geonames config loading from web.xml ---------------------
 
 	@Test

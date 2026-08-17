@@ -11,7 +11,7 @@ import jakarta.ws.rs.core.Application;
  * 
  * @author matthias
  */
-@ApplicationPath("/api")
+@ApplicationPath("/")
 public class ClimateChartsApplication extends Application
 {	
 	@Override

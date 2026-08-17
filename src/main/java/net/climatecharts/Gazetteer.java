@@ -1,7 +1,9 @@
 package net.climatecharts;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ListIterator;
@@ -63,6 +65,28 @@ public class Gazetteer
 				+ "Configure it in web.xml or override via Tomcat context.xml.");
 		}
 		return value;
+	}
+
+	/** Serves /index.html at GET /. Necessary because @ApplicationPath("/")
+	 *  on ClimateChartsApplication routes the JAX-RS servlet over the entire
+	 *  context, which bypasses Tomcat's welcome-file mechanism. Mirrors the
+	 *  viewHome() pattern in weatherstations-api. */
+	@GET
+	@Produces(MediaType.TEXT_HTML)
+	public Response viewHome()
+	{
+		try (InputStream in = servletContext.getResourceAsStream("/index.html"))
+		{
+			if (in == null)
+			{
+				return Response.status(Response.Status.NOT_FOUND).build();
+			}
+			return Response.ok(new String(in.readAllBytes(), StandardCharsets.UTF_8)).build();
+		}
+		catch (IOException e)
+		{
+			return Response.status(Response.Status.INTERNAL_SERVER_ERROR).build();
+		}
 	}
 
 	/** Fetches the response body of the given URL as a String. Package-private
