@@ -122,7 +122,7 @@ public class GazetteerTest
 		CloseableHttpClient client = clientReturning(body);
 		Gazetteer g = new Gazetteer(client);
 		g.servletContext = servletContext;
-		String result = g.find("getName", 50.0, 10.0, 20);
+		String result = g.getName(50.0, 10.0, 20);
 
 		assertTrue("expected PPLA result, got: " + result, result.contains("\"BigRegion\""));
 		assertTrue(result.contains("\"fcode\":\"PPLA\""));
@@ -139,7 +139,7 @@ public class GazetteerTest
 		CloseableHttpClient client = clientReturning(body);
 		Gazetteer g = new Gazetteer(client);
 		g.servletContext = servletContext;
-		String result = g.find("getName", 50.0, 10.0, 20);
+		String result = g.getName(50.0, 10.0, 20);
 
 		assertTrue(result.contains("\"CityB\""));
 	}
@@ -152,7 +152,7 @@ public class GazetteerTest
 		CloseableHttpClient client = clientReturning(body);
 		Gazetteer g = new Gazetteer(client);
 		g.servletContext = servletContext;
-		String result = g.find("getName", 50.0, 10.0, 20);
+		String result = g.getName(50.0, 10.0, 20);
 
 		assertEquals("{}", result);
 	}
@@ -160,12 +160,9 @@ public class GazetteerTest
 	// ---------- Edge cases ------------------------------------------------
 
 	/** Geonames occasionally returns features with an fcode we didn't ask for
-	 *  (e.g. PPLX when we only requested P, PPL, PPLA, ...). The current
-	 *  implementation must not crash with ArrayIndexOutOfBoundsException.
-	 *
-	 *  TODO(phase 6): fix the negative-index bug at Gazetteer.java:218
-	 *  before re-enabling. */
-	@Ignore("Known bug; fixed in Phase 6 (refactor: harden parsing).")
+	 *  (e.g. PPLX when we only requested P, PPL, PPLA, ...). The implementation
+	 *  must skip those silently rather than crashing with
+	 *  ArrayIndexOutOfBoundsException. */
 	@Test
 	public void getName_unknownFcode_isIgnored_notThrown() throws Exception
 	{
@@ -176,17 +173,20 @@ public class GazetteerTest
 		CloseableHttpClient client = clientReturning(body);
 		Gazetteer g = new Gazetteer(client);
 		g.servletContext = servletContext;
-		String result = g.find("getName", 50.0, 10.0, 20);
+		String result = g.getName(50.0, 10.0, 20);
 
+		// The unknown fcode is dropped; no crash, no result.
 		assertEquals("{}", result);
 	}
 
+	// ---------- Bad-request validation -----------------------------------
+
 	@Test
-	public void find_missingLat_throws400() throws Exception
+	public void getName_missingLat_throws400() throws Exception
 	{
 		Gazetteer g = newGazetteer();
 		try {
-			g.find("getName", null, 10.0, 20);
+			g.getName(null, 10.0, 20);
 			fail("expected WebApplicationException for missing lat");
 		} catch (WebApplicationException e) {
 			assertEquals(400, e.getResponse().getStatus());
@@ -194,12 +194,12 @@ public class GazetteerTest
 	}
 
 	@Test
-	public void find_unknownOp_throws400() throws Exception
+	public void getElevation_missingLat_throws400() throws Exception
 	{
 		Gazetteer g = newGazetteer();
 		try {
-			g.find("getBogus", 50.0, 10.0, 20);
-			fail("expected WebApplicationException for unknown op");
+			g.getElevation(null, 10.0);
+			fail("expected WebApplicationException for missing lat");
 		} catch (WebApplicationException e) {
 			assertEquals(400, e.getResponse().getStatus());
 		}
@@ -212,7 +212,7 @@ public class GazetteerTest
 	{
 		RecordingGazetteer g = newRecorder();
 
-		g.find("getName", 51.0516, 13.7349, 25);
+		g.getName(51.0516, 13.7349, 25);
 
 		assertNotNull(g.lastUri);
 		String host = g.lastUri.getHost();
@@ -236,7 +236,7 @@ public class GazetteerTest
 	{
 		RecordingGazetteer g = newRecorder();
 
-		g.find("getName", 51.0516, 13.7349, null);
+		g.getName(51.0516, 13.7349, null);
 
 		String q = g.lastUri.getRawQuery();
 		assertTrue("default radius should be 10, got: " + q, q.contains("radius=10"));
@@ -250,9 +250,60 @@ public class GazetteerTest
 		Gazetteer g = new Gazetteer(client);
 		g.servletContext = servletContext;
 
-		String result = g.find("getElevation", 50.0, 10.0, null);
+		String result = g.getElevation(50.0, 10.0);
 
 		assertEquals(body, result);
+	}
+
+	// ---------- Geonames error-response handling (Phase 6.4) ------------
+
+	@Test
+	public void getName_geonamesErrorResponse_returns502() throws Exception
+	{
+		// Geonames returns this shape on auth failure, rate limit, etc.
+		String body = "{ \"status\": {"
+			+ "\"message\": \"user does not exist.\","
+			+ "\"value\": 18"
+			+ "} }";
+
+		CloseableHttpClient client = clientReturning(body);
+		Gazetteer g = new Gazetteer(client);
+		g.servletContext = servletContext;
+
+		try {
+			g.getName(51.0516, 13.7349, 20);
+			fail("expected WebApplicationException for Geonames error response");
+		} catch (WebApplicationException e) {
+			assertEquals(502, e.getResponse().getStatus());
+			String responseBody = e.getResponse().getEntity().toString();
+			assertTrue("error body should include geonames code: " + responseBody,
+				responseBody.contains("\"code\":18"));
+			assertTrue("error body should include geonames message: " + responseBody,
+				responseBody.contains("\"message\":\"user does not exist.\""));
+		}
+	}
+
+	@Test
+	public void getName_unexpectedResponse_returns502() throws Exception
+	{
+		// Neither 'geonames' nor 'status' in the response — Geonames sent us
+		// something we don't know how to parse. Should not propagate a
+		// JSONException up as a 500.
+		String body = "{ \"weird\": \"shape\" }";
+
+		CloseableHttpClient client = clientReturning(body);
+		Gazetteer g = new Gazetteer(client);
+		g.servletContext = servletContext;
+
+		try {
+			g.getName(51.0516, 13.7349, 20);
+			fail("expected WebApplicationException for unexpected response shape");
+		} catch (WebApplicationException e) {
+			assertEquals(502, e.getResponse().getStatus());
+			String responseBody = e.getResponse().getEntity().toString();
+			assertTrue("error body should mention neither geonames nor status: " + responseBody,
+				responseBody.contains("neither 'geonames' nor 'status'"));
+		}
 	}
 
 	// ---------- Geonames config loading from web.xml ---------------------
@@ -325,7 +376,7 @@ public class GazetteerTest
 			.thenReturn("my-prod-account");
 		RecordingGazetteer g = newRecorder();
 
-		g.find("getName", 51.0516, 13.7349, 10);
+		g.getName(51.0516, 13.7349, 10);
 
 		String q = g.lastUri.getRawQuery();
 		assertTrue("overridden username not in query: " + q,
@@ -342,7 +393,7 @@ public class GazetteerTest
 			.thenReturn("https://mirror.internal.example.com/findNearbyJSON");
 		RecordingGazetteer g = newRecorder();
 
-		g.find("getName", 51.0516, 13.7349, 10);
+		g.getName(51.0516, 13.7349, 10);
 
 		String host = g.lastUri.getHost();
 		String path = g.lastUri.getPath();
@@ -357,7 +408,7 @@ public class GazetteerTest
 			.thenReturn("https://mirror.internal.example.com/srtm3JSON");
 		RecordingGazetteer g = newRecorder();
 
-		g.find("getElevation", 51.0516, 13.7349, null);
+		g.getElevation(51.0516, 13.7349);
 
 		String host = g.lastUri.getHost();
 		String path = g.lastUri.getPath();
@@ -373,8 +424,8 @@ public class GazetteerTest
 	@Test
 	public void live_smokeTest() throws Exception
 	{
-		String elevation = new Gazetteer().find("getElevation", 51.0516, 13.7349, null);
-		String name      = new Gazetteer().find("getName",      51.0516, 13.7349, 20);
+		String elevation = new Gazetteer().getElevation(51.0516, 13.7349);
+		String name      = new Gazetteer().getName(51.0516, 13.7349, 20);
 		System.out.println("elevation=" + elevation);
 		System.out.println("name=" + name);
 	}

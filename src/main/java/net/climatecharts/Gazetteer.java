@@ -9,11 +9,11 @@ import java.util.ListIterator;
 import jakarta.servlet.ServletContext;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
-import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -31,7 +31,7 @@ import org.json.*;
  * @author Matthias Müller and Marcus Kossatz
  */
 
-@Path("/{op}")
+@Path("/")
 public class Gazetteer
 {
 
@@ -74,14 +74,11 @@ public class Gazetteer
 			return EntityUtils.toString(response.getEntity());
 		}
 	}
-	
-	// how many kilometers away from the given point shall be searched for the next location?
-	private static int 	locationRadius = 0;
-	
+
 	/* priority list: location codes
 	 * in which order of priority shall location name be found?
 	 * i.e. if a result in first priority list entry is found, it is taken
-	 * if not, look in the second entry, and so on... 
+	 * if not, look in the second entry, and so on...
 	 */
 	private static final String[] locationCodes = {
 		"PPLC",
@@ -95,7 +92,7 @@ public class Gazetteer
 		"PPLS",
 		"PPLH",
 		"PPLR",
-	}; 
+	};
 	
 	
 	/* find place name:
@@ -114,171 +111,192 @@ public class Gazetteer
 	
 	
 	@GET
+	@Path("/getName")
 	@Produces("application/json")
-	public String find(
-				@PathParam("op") String 	op,
+	public String getName(
 				@QueryParam("lat") Double 	lat,
 				@QueryParam("lng") Double 	lng,
                                 @QueryParam("rad") Integer 	rad
 			)
-	{	
+	{
 		if (lat == null || lng == null)
 		{
 			throw new WebApplicationException(Response.Status.BAD_REQUEST);
 		}
-                if (rad == null)
-                {
-                    locationRadius = 10;
-                }
-                else
-                {
-                    locationRadius = rad;
-                }
-		
-		if (op.equals("getName"))
+
+		int locationRadius = (rad == null) ? 10 : rad;
+
+		try
 		{
-			try
+			// feature codes: https://www.geonames.org/export/codes.html
+			URIBuilder uri = new URIBuilder(geonamesConfig("geonames.findNearbyUrl"))
+				.addParameter("lat", lat.toString())
+				.addParameter("lng", lng.toString())
+				.addParameter("featureClass", "P");
+
+			for (int i=0; i<locationCodes.length; i++)
+				uri.addParameter("featureCode", locationCodes[i]);
+
+			uri.addParameter("radius", Integer.toString(locationRadius))
+				.addParameter("maxRows", "100")
+				.addParameter("username", geonamesConfig("geonames.username"));
+
+			// response: JSON string
+			final String dataStr = fetch(uri.build());
+
+			JSONObject dataObj = new JSONObject(dataStr);
+
+			if (dataObj.has("status"))
 			{
-				// feature codes: https://www.geonames.org/export/codes.html
-				URIBuilder uri = new URIBuilder(geonamesConfig("geonames.findNearbyUrl"))
-					.addParameter("lat", lat.toString())
-					.addParameter("lng", lng.toString())
-					.addParameter("featureClass", "P");
+				JSONObject status = dataObj.getJSONObject("status");
+				int code = status.optInt("value", -1);
+				String message = status.optString("message", "unknown Geonames error");
+				throw geonamesErrorResponse(code, message);
+			}
 
-				for (int i=0; i<locationCodes.length; i++)
-					uri.addParameter("featureCode", locationCodes[i]);
+			JSONArray resultLocations = dataObj.optJSONArray("geonames");
+			if (resultLocations == null)
+			{
+				throw geonamesErrorResponse(-1, "Geonames response had neither 'geonames' nor 'status'");
+			}
 
-				uri.addParameter("radius", Integer.toString(locationRadius))
-//					.addParameter("localCountry", "true")
-					.addParameter("maxRows", "100")
-					.addParameter("username", geonamesConfig("geonames.username"));
+			// 2nd level: array of location results
+			/* put each location into a bucket for its location code
+			 * -> ordered by priority in the list "locationCodes"
+			 * data structure: array of list of JSONObjects (locations)
+			 * 	[
+			 * 	  <List>[{JSONObject}, {JSONObject}, ...],	// 1. priority location code (e.g. "PPLC")
+			 * 	  <List>[{JSONObject}, {JSONObject}, ...],	// 2. priority location code (e.g. "PPLG")
+			 * 	  ...
+			 *    <List>[{JSONObject}, {JSONObject}, ...],	// last priority location code (e.g. "PPLR")
+			 * 	]
+			 */
+			List<List<JSONObject>> resultLocationsByPriority = new ArrayList<>();
+			for (int i=0; i<locationCodes.length; i++)
+				resultLocationsByPriority.add(new ArrayList<>());
 
-				// response: JSON string
-				final String dataStr = fetch(uri.build());
-				
-				// convert JSON string to JSON object to read it
-				JSONObject dataObj = new JSONObject(dataStr);
-								
-				// 1st level: object "geonames"
-				JSONArray resultLocations = (JSONArray) dataObj.get("geonames");
-				// has only one child: array of location results
-				
-				// 2nd level: array of location results
-				/* put each location into a bucket for its location code
-				 * -> ordered by priority in the list "locationCodes"
-				 * data structure: array of list of JSONObjects (locations)
-				 * 	[
-				 * 	  <List>[{JSONObject}, {JSONObject}, ...],	// 1. priority location code (e.g. "PPLC")
-				 * 	  <List>[{JSONObject}, {JSONObject}, ...],	// 2. priority location code (e.g. "PPLG")
-				 * 	  ...
-				 *    <List>[{JSONObject}, {JSONObject}, ...],	// last priority location code (e.g. "PPLR")
-				 * 	]
-				 */
-				List<List<JSONObject>> resultLocationsByPriority = new ArrayList<>();
-				for (int i=0; i<locationCodes.length; i++)
-					resultLocationsByPriority.add(new ArrayList<>());
+			// put the result locations in the correct list
+			for (int i=0; i<resultLocations.length(); i++)
+			{
+				JSONObject resultLocation = resultLocations.getJSONObject(i);
 
-				// put the result locations in the correct list
-				for (int i=0; i<resultLocations.length(); i++)
+				// get location code
+				String resultLocationCode = resultLocation.getString("fcode");
+
+				// find priority number of this location code
+				int resultLocationCodeIdx = -1;
+				for (int j=0; j<locationCodes.length; j++)
 				{
-					JSONObject resultLocation = resultLocations.getJSONObject(i);
-
-					// get location code
-					String resultLocationCode = resultLocation.getString("fcode");
-
-					// find priority number of this location code
-					int resultLocationCodeIdx = -1;
-					for (int j=0; j<locationCodes.length; j++)
+					if (locationCodes[j].equals(resultLocationCode))
 					{
-						if (locationCodes[j].equals(resultLocationCode))
-						{
-							resultLocationCodeIdx = j;
-							break;
-						}
+						resultLocationCodeIdx = j;
+						break;
 					}
+				}
 
-					// put the location result in the correct array
+				// unknown fcode (Geonames occasionally returns feature codes
+				// we didn't request, e.g. PPLX). Skip rather than crash.
+				if (resultLocationCodeIdx >= 0)
+				{
 					resultLocationsByPriority.get(resultLocationCodeIdx).add(resultLocation);
 				}
+			}
 
-				// priority: find the first array in which there is at least one result location
-				// and take that location with the largest population (default: first result)
-				for (int i=0; i<resultLocationsByPriority.size(); i++)
+			// priority: find the first array in which there is at least one result location
+			// and take that location with the largest population (default: first result)
+			for (int i=0; i<resultLocationsByPriority.size(); i++)
+			{
+				// check if there is a location code in this priority list
+				if (!resultLocationsByPriority.get(i).isEmpty())
 				{
-					// check if there is a location code in this priority list
-					if (!resultLocationsByPriority.get(i).isEmpty())
+					// default result: the first result in the list, because it is the closest
+					JSONObject bestResultLocation = resultLocationsByPriority.get(i).get(0);
+					int largestLocationPopulation = bestResultLocation.getInt("population");
+
+					// check if there is any location in this priority list that has a larger population
+					ListIterator<JSONObject> listIterator = resultLocationsByPriority.get(i).listIterator();
+
+					// no need to check the first element => skip it = already go to first element
+					listIterator.next();
+
+					while (listIterator.hasNext())
 					{
-						// default result: the first result in the list, because it is the closest
-						JSONObject bestResultLocation = resultLocationsByPriority.get(i).get(0);
-						int largestLocationPopulation = bestResultLocation.getInt("population");
+						// get the current location and its population
+						JSONObject currentResultLocation = listIterator.next();
+						int currentLocationPopulation = currentResultLocation.getInt("population");
 
-						// check if there is any location in this priority list that has a larger population
-						ListIterator<JSONObject> listIterator = resultLocationsByPriority.get(i).listIterator();
-
-						// no need to check the first element => skip it = already go to first element
-						listIterator.next();
-
-						while (listIterator.hasNext())
+						// is the current location larger?
+						if (currentLocationPopulation > largestLocationPopulation)
 						{
-							// get the current location and its population
-							JSONObject currentResultLocation = listIterator.next();
-							int currentLocationPopulation = currentResultLocation.getInt("population");
-
-							// is the current location larger?
-							if (currentLocationPopulation > largestLocationPopulation)
-							{
-								// update best result location
-								bestResultLocation = currentResultLocation;
-								largestLocationPopulation = currentLocationPopulation;
-							}
+							// update best result location
+							bestResultLocation = currentResultLocation;
+							largestLocationPopulation = currentLocationPopulation;
 						}
-
-						// the result was definitely found! => return it
-						return bestResultLocation.toString();
 					}
-				}
-				
-				// in case no result was in the result set => return empty result
-				return new JSONObject().toString();
-			}
-			catch (IOException e)
-			{
-				e.printStackTrace();
-				throw new WebApplicationException(Response.Status.INTERNAL_SERVER_ERROR);
-			}
-			catch (URISyntaxException e)
-			{
-				e.printStackTrace();
-				throw new WebApplicationException(Response.Status.INTERNAL_SERVER_ERROR);
-			}
-		}
-		
-		else if (op.equals("getElevation"))
-		{
-			try
-			{
-				final java.net.URI uri = new URIBuilder(geonamesConfig("geonames.srtm3Url"))
-						.addParameter("lat", lat.toString())
-						.addParameter("lng", lng.toString())
-						.addParameter("username", geonamesConfig("geonames.username"))
-						.build();
 
-				return fetch(uri);
+					// the result was definitely found! => return it
+					return bestResultLocation.toString();
+				}
 			}
-			catch (IOException e)
-			{
-				e.printStackTrace();
-				throw new WebApplicationException();
-			}
-			catch (URISyntaxException e)
-			{
-				e.printStackTrace();
-				throw new WebApplicationException();
-			}
+
+			// in case no result was in the result set => return empty result
+			return new JSONObject().toString();
 		}
-		else
+		catch (IOException e)
+		{
+			e.printStackTrace();
+			throw new WebApplicationException(Response.Status.INTERNAL_SERVER_ERROR);
+		}
+		catch (URISyntaxException e)
+		{
+			e.printStackTrace();
+			throw new WebApplicationException(Response.Status.INTERNAL_SERVER_ERROR);
+		}
+	}
+
+	@GET
+	@Path("/getElevation")
+	@Produces("application/json")
+	public String getElevation(
+				@QueryParam("lat") Double 	lat,
+				@QueryParam("lng") Double 	lng
+			)
+	{
+		if (lat == null || lng == null)
 		{
 			throw new WebApplicationException(Response.Status.BAD_REQUEST);
 		}
+
+		try
+		{
+			final java.net.URI uri = new URIBuilder(geonamesConfig("geonames.srtm3Url"))
+					.addParameter("lat", lat.toString())
+					.addParameter("lng", lng.toString())
+					.addParameter("username", geonamesConfig("geonames.username"))
+					.build();
+
+			return fetch(uri);
+		}
+		catch (IOException e)
+		{
+			e.printStackTrace();
+			throw new WebApplicationException(Response.Status.INTERNAL_SERVER_ERROR);
+		}
+		catch (URISyntaxException e)
+		{
+			e.printStackTrace();
+			throw new WebApplicationException(Response.Status.INTERNAL_SERVER_ERROR);
+		}
+	}
+
+	private static WebApplicationException geonamesErrorResponse(int code, String message)
+	{
+		String body = "{\"error\":\"geonames_error\",\"code\":" + code
+			+ ",\"message\":\"" + message.replace("\"", "\\\"") + "\"}";
+		return new WebApplicationException(
+			Response.status(Response.Status.BAD_GATEWAY)
+				.type(MediaType.APPLICATION_JSON)
+				.entity(body)
+				.build());
 	}
 }
