@@ -7,7 +7,35 @@
 	<welcome-file-list>
 		<welcome-file>index.html</welcome-file>
 	</welcome-file-list>
-	
+
+	<!--
+		Geonames API configuration.
+
+		The web.xml defaults below are placeholders for local development —
+		they are NOT real production credentials. Replace them with your own
+		Geonames account username and the canonical TLS endpoint, or override
+		per deployment via Tomcat context.xml, e.g.:
+
+			<Context>
+				<Parameter name="geonames.username"     value="..." override="false"/>
+				<Parameter name="geonames.srtm3Url"      value="..." override="false"/>
+				<Parameter name="geonames.findNearbyUrl" value="..." override="false"/>
+			</Context>
+
+	-->
+	<context-param>
+		<param-name>geonames.username</param-name>
+		<param-value></param-value>
+	</context-param>
+	<context-param>
+		<param-name>geonames.srtm3Url</param-name>
+		<param-value>https://secure.geonames.org/srtm3JSON</param-value>
+	</context-param>
+	<context-param>
+		<param-name>geonames.findNearbyUrl</param-name>
+		<param-value>https://secure.geonames.org/findNearbyJSON</param-value>
+	</context-param>
+
 	<filter>
 	  <filter-name>CorsFilter</filter-name>
 	  <filter-class>org.apache.catalina.filters.CorsFilter</filter-class>

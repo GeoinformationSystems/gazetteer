@@ -6,12 +6,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.ListIterator;
 
+import jakarta.servlet.ServletContext;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.WebApplicationException;
+import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.Response;
 
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -32,17 +34,12 @@ import org.json.*;
 @Path("/{op}")
 public class Gazetteer
 {
-	// Geonames serves its HTTPS certificate for the host "secure.geonames.org",
-	// not for "api.geonames.org". Calling api.geonames.org over HTTPS triggers
-	// SSLPeerUnverifiedException in any HTTP client with strict hostname
-	// verification (HttpClient, java.net.http, browsers). Use secure.geonames.org
-	// for HTTPS requests — it is the canonical TLS endpoint per geonames docs.
-	private static final String srtm3Url = 		"https://secure.geonames.org/srtm3JSON";
-	private static final String placenameUrl = 	"https://secure.geonames.org/findNearbyJSON";
-	private static final String geonamesUser = 	"climatediagrams";
 
 	// Shared HTTP client; created once per instance and reused across requests.
 	private final transient CloseableHttpClient httpClient;
+
+	@Context
+	ServletContext servletContext;
 
 	/** Default constructor: uses a fresh HttpClient. */
 	public Gazetteer()
@@ -54,6 +51,18 @@ public class Gazetteer
 	Gazetteer(CloseableHttpClient httpClient)
 	{
 		this.httpClient = httpClient;
+	}
+
+	String geonamesConfig(String key)
+	{
+		String value = servletContext.getInitParameter(key);
+		if (value == null || value.isBlank())
+		{
+			throw new IllegalStateException(
+				"Missing required <context-param> " + key + ". "
+				+ "Configure it in web.xml or override via Tomcat context.xml.");
+		}
+		return value;
 	}
 
 	/** Fetches the response body of the given URL as a String. Package-private
@@ -92,15 +101,15 @@ public class Gazetteer
 	/* find place name:
 	 * get a list of all larger places in the area with radius stated above and
 	 * then filter out the result that seems most reasonable
-	 * http://api.geonames.org/findNearbyJSON?lat=51.0516&lng=13.7349
+	 * https://secure.geonames.org/findNearbyJSON?lat=51.0516&lng=13.7349
 	 * 	&featureClass=P&featureCode=PPL&featureCode=PPLA&featureCode=PPLA2
 	 * 	&featureCode=PPLA3&featureCode=PPLA4&featureCode=PPLC&featureCode=PPLG
 	 * 	&featureCode=PPLH&featureCode=PPLL&featureCode=PPLR&featureCode=PPLS
-	 * 	&radius=5&localCountry=true&maxRows=100&username=climatediagrams
-	 * 
+	 * 	&radius=5&localCountry=true&maxRows=100&username=yourusername
+	 *
 	 * find elevation:
-	 * http://api.geonames.org/srtm3JSON?lat=51.7465&lng=14.3206
-	 * 	&username=climatediagrams
+	 * https://secure.geonames.org/srtm3JSON?lat=51.7465&lng=14.3206
+	 * 	&username=yourusername
 	 */
 	
 	
@@ -130,19 +139,19 @@ public class Gazetteer
 		{
 			try
 			{
-				// feature codes: http://www.geonames.org/export/codes.html
-				URIBuilder uri = new URIBuilder(placenameUrl)
+				// feature codes: https://www.geonames.org/export/codes.html
+				URIBuilder uri = new URIBuilder(geonamesConfig("geonames.findNearbyUrl"))
 					.addParameter("lat", lat.toString())
 					.addParameter("lng", lng.toString())
 					.addParameter("featureClass", "P");
-				
+
 				for (int i=0; i<locationCodes.length; i++)
 					uri.addParameter("featureCode", locationCodes[i]);
-				
+
 				uri.addParameter("radius", Integer.toString(locationRadius))
 //					.addParameter("localCountry", "true")
 					.addParameter("maxRows", "100")
-					.addParameter("username", geonamesUser);
+					.addParameter("username", geonamesConfig("geonames.username"));
 
 				// response: JSON string
 				final String dataStr = fetch(uri.build());
@@ -165,18 +174,18 @@ public class Gazetteer
 				 *    <List>[{JSONObject}, {JSONObject}, ...],	// last priority location code (e.g. "PPLR")
 				 * 	]
 				 */
-				List<JSONObject>[] resultLocationsByPriority = new List[locationCodes.length];
-				for (int i=0; i<resultLocationsByPriority.length; i++)
-					resultLocationsByPriority[i] = new ArrayList<>();
+				List<List<JSONObject>> resultLocationsByPriority = new ArrayList<>();
+				for (int i=0; i<locationCodes.length; i++)
+					resultLocationsByPriority.add(new ArrayList<>());
 
 				// put the result locations in the correct list
 				for (int i=0; i<resultLocations.length(); i++)
 				{
 					JSONObject resultLocation = resultLocations.getJSONObject(i);
-					
+
 					// get location code
 					String resultLocationCode = resultLocation.getString("fcode");
-					
+
 					// find priority number of this location code
 					int resultLocationCodeIdx = -1;
 					for (int j=0; j<locationCodes.length; j++)
@@ -187,34 +196,34 @@ public class Gazetteer
 							break;
 						}
 					}
-					
+
 					// put the location result in the correct array
-					resultLocationsByPriority[resultLocationCodeIdx].add(resultLocation);
+					resultLocationsByPriority.get(resultLocationCodeIdx).add(resultLocation);
 				}
-				
+
 				// priority: find the first array in which there is at least one result location
 				// and take that location with the largest population (default: first result)
-				for (int i=0; i<resultLocationsByPriority.length; i++)
+				for (int i=0; i<resultLocationsByPriority.size(); i++)
 				{
 					// check if there is a location code in this priority list
-					if (!resultLocationsByPriority[i].isEmpty())
+					if (!resultLocationsByPriority.get(i).isEmpty())
 					{
 						// default result: the first result in the list, because it is the closest
-						JSONObject bestResultLocation = resultLocationsByPriority[i].get(0);
+						JSONObject bestResultLocation = resultLocationsByPriority.get(i).get(0);
 						int largestLocationPopulation = bestResultLocation.getInt("population");
-						
+
 						// check if there is any location in this priority list that has a larger population
-						ListIterator<JSONObject> listIterator = resultLocationsByPriority[i].listIterator();
-						
+						ListIterator<JSONObject> listIterator = resultLocationsByPriority.get(i).listIterator();
+
 						// no need to check the first element => skip it = already go to first element
 						listIterator.next();
-						
+
 						while (listIterator.hasNext())
 						{
 							// get the current location and its population
 							JSONObject currentResultLocation = listIterator.next();
 							int currentLocationPopulation = currentResultLocation.getInt("population");
-							
+
 							// is the current location larger?
 							if (currentLocationPopulation > largestLocationPopulation)
 							{
@@ -223,7 +232,7 @@ public class Gazetteer
 								largestLocationPopulation = currentLocationPopulation;
 							}
 						}
-						
+
 						// the result was definitely found! => return it
 						return bestResultLocation.toString();
 					}
@@ -246,13 +255,12 @@ public class Gazetteer
 		
 		else if (op.equals("getElevation"))
 		{
-			// https://api.geonames.org/srtm3JSON?lat=21.15&lng=46.38&username=climatediagrams
 			try
 			{
-				final java.net.URI uri = new URIBuilder(srtm3Url)
+				final java.net.URI uri = new URIBuilder(geonamesConfig("geonames.srtm3Url"))
 						.addParameter("lat", lat.toString())
 						.addParameter("lng", lng.toString())
-						.addParameter("username", geonamesUser)
+						.addParameter("username", geonamesConfig("geonames.username"))
 						.build();
 
 				return fetch(uri);
